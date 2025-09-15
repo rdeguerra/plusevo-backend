@@ -83,3 +83,4 @@ export default async function handler(req, res) {
     return res.status(500).json({
       error: "Error interno en /api/leo-chat",
       message: String(err?.message |
+fix leo-chat.js
