@@ -1,59 +1,82 @@
-// api/leo-chat.js
-export default async function handler(req, res) {
-  // Permitir CORS simple
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+// /app/api/leo-chat/route.js
+import OpenAI from "openai";
 
-  if (req.method === "OPTIONS") return res.status(200).end();
-  if (req.method !== "POST") return res.status(405).json({ error: "Only POST" });
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+const CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization",
+};
+
+export async function OPTIONS() {
+  return new Response(null, { status: 204, headers: CORS });
+}
+
+export async function POST(req) {
   try {
-    const { question } = req.body || {};
+    const { question } = await req.json();
+
+    if (!process.env.OPENAI_API_KEY) {
+      return new Response(
+        JSON.stringify({ error: "Falta OPENAI_API_KEY en variables de entorno." }),
+        { status: 500, headers: { ...CORS, "Content-Type": "application/json" } }
+      );
+    }
+    if (!process.env.OPENAI_VECTOR_STORE_ID) {
+      return new Response(
+        JSON.stringify({ error: "Falta OPENAI_VECTOR_STORE_ID en variables de entorno." }),
+        { status: 500, headers: { ...CORS, "Content-Type": "application/json" } }
+      );
+    }
     if (!question || typeof question !== "string") {
-      return res.status(400).json({ error: "Falta 'question' (string)" });
+      return new Response(
+        JSON.stringify({ error: "Envía { question: string } en el body." }),
+        { status: 400, headers: { ...CORS, "Content-Type": "application/json" } }
+      );
     }
 
-    const system = `
-      Eres Plusevo IA. Responde SOLO con la información de los archivos del proyecto PLUSEVO.
-      Si no está en los archivos, dilo amablemente y sugiere subir el documento. Español claro y preciso.
-    `.trim();
-
-    // Llamada al endpoint de OpenAI
-    const payload = {
-      model: "gpt-5-mini",
+    // --- RESPONSES API + FILE SEARCH (vector store) ---
+    const resp = await openai.responses.create({
+      model: "gpt-5.1", // puedes cambiar a gpt-5.1-mini si prefieres menor costo
+      system:
+        "Eres LEO, el asistente oficial de PLUSEVO. Responde con precisión, tono profesional y directo. " +
+        "Prioriza SIEMPRE contenido de los documentos del vector store. Si algo no está en los archivos, " +
+        "declara: 'No tengo ese dato en los documentos de PLUSEVO'. Si hay dudas, pide precisión.",
       input: [
-        { role: "system", content: system },
-        { role: "user", content: question }
-      ]
-    };
-
-    const r = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
-        "OpenAI-Project": process.env.OPENAI_PROJECT_ID
+        {
+          role: "user",
+          content: question,
+        },
+      ],
+      // Habilita búsqueda en tu Vector Store
+      tools: [{ type: "file_search" }],
+      tool_config: {
+        file_search: {
+          vector_store_ids: [process.env.OPENAI_VECTOR_STORE_ID],
+          // opcionales:
+          max_num_results: 8,
+        },
       },
-      body: JSON.stringify(payload)
+      // Opcional: controla la verbosidad/estilo
+      reasoning: { effort: "medium" },
+      temperature: 0.2,
     });
 
-    const data = await r.json();
+    // Texto final cómodo (el SDK expone output_text ya procesado)
+    const answer =
+      resp.output_text?.trim?.() ||
+      (Array.isArray(resp.output) ? resp.output.map(p => p.content?.[0]?.text?.value || "").join("\n").trim() : "");
 
-    // Agarrar texto de salida
-    let answer = "";
-    if (data?.output && Array.isArray(data.output)) {
-      const msg = data.output.find(o => o.type === "message");
-      if (msg?.content?.[0]?.text) answer = msg.content[0].text;
-    }
-
-    // Si no hay texto, devolver raw para debug
-    if (!answer) {
-      return res.status(200).json({ answer: "", raw: data });
-    }
-
-    return res.status(200).json({ answer });
+    return new Response(JSON.stringify({ answer }), {
+      status: 200,
+      headers: { ...CORS, "Content-Type": "application/json" },
+    });
   } catch (err) {
-    return res.status(500).json({ error: "Server error", detail: err.message });
+    console.error("leo-chat error:", err);
+    return new Response(
+      JSON.stringify({ error: "Error interno", detail: String(err?.message || err) }),
+      { status: 500, headers: { ...CORS, "Content-Type": "application/json" } }
+    );
   }
 }
