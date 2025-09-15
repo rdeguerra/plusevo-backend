@@ -1,4 +1,5 @@
 // api/leo-chat.js
+
 export default async function handler(req, res) {
   // CORS simple para probar desde navegador / curl
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -6,7 +7,7 @@ export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
   if (req.method === "OPTIONS") return res.status(200).end();
-  if (req.method !== "POST")  return res.status(405).json({ error: "Only POST" });
+  if (req.method !== "POST") return res.status(405).json({ error: "Only POST" });
 
   try {
     const { question, model = "gpt-5-mini" } = req.body || {};
@@ -15,52 +16,48 @@ export default async function handler(req, res) {
     }
 
     const system = `
-Eres Plusevo IA. Responde SOLO con la información de los archivos del proyecto PLUSEVO.
-Si no está en los archivos, dilo amablemente y sugiere subir el documento. Español claro y preciso.
+      Eres Plusevo IA. Responde SOLO con la información de los archivos del proyecto PLUSEVO.
+      Si no está en los archivos, dilo amablemente y sugiere subir el documento.
+      Español claro y directo.
     `.trim();
 
-    // Llamada a Responses API (sin tools para evitar errores)
+    // Llamada a Responses API
     const payload = {
       model,
       input: [
         { role: "system", content: system },
         { role: "user", content: question },
       ],
-      // Si luego quieres usar vector store, lo activamos con "tools": [{"type":"file_search"}]
-      // y adjuntamos correctamente; por ahora lo dejamos simple para garantizar respuesta.
     };
 
     const r = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "OpenAI-Project": process.env.OPENAI_PROJECT_ID,
       },
       body: JSON.stringify(payload),
     });
 
     const data = await r.json();
 
-    // Si OpenAI respondió con error, lo propagamos para verlo claro
     if (!r.ok) {
       return res.status(500).json({ error: "OpenAI error", detail: data });
     }
 
-    // Paths posibles en Responses API:
-    // - data.output_text  (string de conveniencia)
-    // - data.output[0].content[0].text  (estructura detallada)
-    const answer =
-      data.output_text
-      ?? (Array.isArray(data.output) && data.output[0]?.content?.[0]?.text)
-      ?? "";
-
-    // Si por algún motivo viene vacío, devolvemos el objeto completo para depurar
-    if (!answer) {
-      return res.status(200).json({ answer: "", raw: data });
+    // Extraer texto de la respuesta
+    let finalAnswer = "";
+    if (data?.output?.length > 0) {
+      const content = data.output[0]?.content?.[0]?.text;
+      if (content) finalAnswer = content;
     }
 
-    return res.status(200).json({ answer });
+    return res.status(200).json({
+      answer: finalAnswer,
+      raw: data, // Para depuración
+    });
   } catch (err) {
-    return res.status(500).json({ error: "Server error", detail: err?.message || String(err) });
+    return res.status(500).json({ error: "Server error", detail: err.message });
   }
 }
