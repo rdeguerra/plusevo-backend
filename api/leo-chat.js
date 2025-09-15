@@ -1,4 +1,4 @@
-// api/leo-chat.js — Versión estable SIN file_search NI attachments
+// api/leo-chat.js — Versión estable con fallback de modelos (sin file_search)
 export const config = { runtime: "nodejs" };
 
 const CORS = {
@@ -36,22 +36,47 @@ export default async function handler(req, res) {
     const { default: OpenAI } = await import("openai");
     const client = new OpenAI({ apiKey: API_KEY });
 
-    // IMPORTANTE: SIN tools, SIN tool_resources, SIN attachments
-    const r = await client.responses.create({
-      model: "gpt-5.1-mini",
-      instructions:
-        "Eres LEO, asistente de PLUSEVO. Responde claro, breve y profesional. " +
-        "Si piden datos internos, aclara: 'Por ahora no tengo acceso a los documentos de PLUSEVO en este entorno.'",
-      input: question
+    // Modelos compatibles (orden de preferencia)
+    const CANDIDATE_MODELS = ["gpt-4o-mini", "gpt-4.1-mini", "gpt-4o"];
+
+    let lastErr = null;
+    for (const model of CANDIDATE_MODELS) {
+      try {
+        const r = await client.responses.create({
+          model,
+          instructions:
+            "Eres LEO, asistente de PLUSEVO. Responde claro, breve y profesional. " +
+            "Si piden datos internos, aclara: 'Por ahora no tengo acceso a los documentos de PLUSEVO en este entorno.'",
+          input: question
+        });
+
+        const answer =
+          (typeof r.output_text === "string" && r.output_text.trim()) ||
+          (Array.isArray(r.output)
+            ? r.output.map(p => (p?.content || []).map(c => c?.text?.value || "").join("\n")).join("\n").trim()
+            : "");
+
+        return res.status(200).json({ answer, model_used: model });
+      } catch (err) {
+        // Si es "model does not exist" o similar, probamos el siguiente
+        const msg = String(err?.message || err);
+        const notExist = /model\b.*(does not exist|unknown|unsupported)/i.test(msg);
+        const badParam = /Unknown parameter|Unsupported parameter/i.test(msg);
+        if (notExist || badParam) {
+          lastErr = msg;
+          continue;
+        }
+        // Si es otro error (red, auth, etc.), rompemos
+        return res.status(500).json({ error: "OpenAI fallo", message: msg });
+      }
+    }
+
+    // Si ninguno funcionó:
+    return res.status(500).json({
+      error: "OpenAI fallo",
+      message: lastErr || "No hay modelos compatibles disponibles en esta cuenta/entorno."
     });
 
-    const answer =
-      (typeof r.output_text === "string" && r.output_text.trim()) ||
-      (Array.isArray(r.output)
-        ? r.output.map(p => (p?.content || []).map(c => c?.text?.value || "").join("\n")).join("\n").trim()
-        : "");
-
-    return res.status(200).json({ answer });
   } catch (err) {
     return res.status(500).json({
       error: "Error interno en /api/leo-chat",
