@@ -1,4 +1,4 @@
-// api/leo-chat.js — Responses + file_search usando attachments (sin tool_resources)
+// api/leo-chat.js — Versión estable SIN file_search (funciona ya)
 export const config = { runtime: "nodejs" };
 
 const CORS = {
@@ -22,9 +22,7 @@ export default async function handler(req, res) {
     }
 
     const API_KEY = process.env.OPENAI_API_KEY;
-    const VSTORE = process.env.OPENAI_VECTOR_STORE_ID; // vs_68c873b973e08191be0e69d0410a5eb8
     if (!API_KEY) return res.status(500).json({ error: "Falta OPENAI_API_KEY" });
-    if (!VSTORE) return res.status(500).json({ error: "Falta OPENAI_VECTOR_STORE_ID" });
 
     // Body seguro
     let body = {};
@@ -34,37 +32,23 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "Envía { question: string }" });
     }
 
-    // Carga SDK on-demand
+    // SDK on-demand
     const { default: OpenAI } = await import("openai");
     const client = new OpenAI({ apiKey: API_KEY });
 
-    // IMPORTANTE: usamos attachments por mensaje para enlazar el Vector Store
-    const resp = await client.responses.create({
-      // Modelos de Responses que soportan file_search: prueba primero gpt-4.1-mini
-      model: "gpt-4.1-mini",
+    // Chat/Responses sin tools (compatible universal)
+    const r = await client.responses.create({
+      model: "gpt-5.1-mini",      // puedes usar "gpt-4.1-mini" si prefieres
       instructions:
-        "Eres LEO, asistente de PLUSEVO. Responde SOLO con información encontrada en los documentos del Vector Store. " +
-        "Si la respuesta no está en esos documentos, di: 'No tengo ese dato en los documentos de PLUSEVO'.",
-      tools: [{ type: "file_search" }],
-      input: [
-        {
-          role: "user",
-          // El contenido va como input_text:
-          content: [
-            { type: "input_text", text: question }
-          ],
-          // Aquí “pegamos” el Vector Store al mensaje
-          attachments: [
-            { vector_store_id: VSTORE }
-          ]
-        }
-      ]
+        "Eres LEO, asistente de PLUSEVO. Responde claro, breve y profesional. " +
+        "Si el usuario pide datos internos, aclara: 'Por ahora no tengo acceso a los documentos de PLUSEVO en este entorno.'",
+      input: question
     });
 
     const answer =
-      (typeof resp.output_text === "string" && resp.output_text.trim()) ||
-      (Array.isArray(resp.output)
-        ? resp.output.map(p => (p?.content || []).map(c => c?.text?.value || "").join("\n")).join("\n").trim()
+      (typeof r.output_text === "string" && r.output_text.trim()) ||
+      (Array.isArray(r.output)
+        ? r.output.map(p => (p?.content || []).map(c => c?.text?.value || "").join("\n")).join("\n").trim()
         : "");
 
     return res.status(200).json({ answer });
