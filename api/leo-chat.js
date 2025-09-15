@@ -1,4 +1,4 @@
-// api/leo-chat.js — Versión final con Vector Store (tool_resources OK)
+// api/leo-chat.js — Versión OK (Responses + file_search)
 export const config = { runtime: "nodejs" };
 
 const CORS = {
@@ -22,7 +22,7 @@ export default async function handler(req, res) {
 
     // Body seguro
     let body = {};
-    try { body = typeof req.body === "object" ? req.body : JSON.parse(req.body || "{}"); } catch {}
+    try { body = typeof req.body === "object" ? req.body : JSON.parse(req.body || "{}"); } catch { body = {}; }
     const question = body?.question;
     if (!question) return res.status(400).json({ error: "Envía { question: string }" });
 
@@ -30,7 +30,7 @@ export default async function handler(req, res) {
     const { default: OpenAI } = await import("openai");
     const client = new OpenAI({ apiKey: API_KEY });
 
-    // Responses API + file_search con tool_resources (no tool_config)
+    // Responses API + file_search (OJO: tools + tool_resources)
     const r = await client.responses.create({
       model: "gpt-5.1",
       instructions:
@@ -38,11 +38,7 @@ export default async function handler(req, res) {
         "Si la respuesta no está en esos documentos, di: 'No tengo ese dato en los documentos de PLUSEVO'.",
       input: question,
       tools: [{ type: "file_search" }],
-      tool_resources: {
-        file_search: {
-          vector_store_ids: [VSTORE],
-        },
-      },
+      tool_resources: { file_search: { vector_store_ids: [VSTORE] } },
     });
 
     const answer =
