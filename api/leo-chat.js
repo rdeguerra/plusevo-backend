@@ -1,4 +1,3 @@
-// api/leo-chat.js — Prueba sin OpenAI
 export const config = { runtime: "nodejs" };
 
 const CORS = {
@@ -11,15 +10,10 @@ const setCors = (res) => { Object.entries(CORS).forEach(([k, v]) => res.setHeade
 export default async function handler(req, res) {
   if (req.method === "OPTIONS") { setCors(res); return res.status(204).end(); }
   setCors(res);
-
-  if (req.method === "GET") {
-    return res.status(200).json({ ok: true, message: "PLUSEVO backend OK. Usa POST con { question }." });
-  }
+  if (req.method === "GET") return res.status(200).json({ ok: true, hint: "Usa POST con { question }" });
   if (req.method !== "POST") return res.status(405).json({ error: "Método no permitido" });
 
   let body = {};
   try { body = typeof req.body === "object" ? req.body : JSON.parse(req.body || "{}"); } catch {}
-  const question = body?.question ?? null;
-
-  return res.status(200).json({ ok: true, echo: question });
+  return res.status(200).json({ ok: true, echo: body?.question ?? null });
 }
