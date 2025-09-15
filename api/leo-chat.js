@@ -1,4 +1,4 @@
-// api/leo-chat.js — Chat Completions + file_search (Vector Store)
+// api/leo-chat.js — Responses + file_search usando attachments (sin tool_resources)
 export const config = { runtime: "nodejs" };
 
 const CORS = {
@@ -26,7 +26,7 @@ export default async function handler(req, res) {
     if (!API_KEY) return res.status(500).json({ error: "Falta OPENAI_API_KEY" });
     if (!VSTORE) return res.status(500).json({ error: "Falta OPENAI_VECTOR_STORE_ID" });
 
-    // Parse body seguro
+    // Body seguro
     let body = {};
     try { body = typeof req.body === "object" ? req.body : JSON.parse(req.body || "{}"); } catch { body = {}; }
     const question = body?.question;
@@ -34,34 +34,40 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "Envía { question: string }" });
     }
 
-    // SDK on-demand
+    // Carga SDK on-demand
     const { default: OpenAI } = await import("openai");
-    const openai = new OpenAI({ apiKey: API_KEY });
+    const client = new OpenAI({ apiKey: API_KEY });
 
-    // Chat Completions con file_search
-    const chat = await openai.chat.completions.create({
-      // Usa un modelo de chat que soporte tools (p. ej. gpt-4.1 o gpt-4o-mini)
-      model: "gpt-4.1",
-      messages: [
-        {
-          role: "system",
-          content:
-            "Eres LEO, asistente oficial de PLUSEVO. Responde SOLO con información encontrada en los documentos del Vector Store. " +
-            "Si la respuesta no está en esos documentos, di textualmente: 'No tengo ese dato en los documentos de PLUSEVO'. " +
-            "Sé conciso y profesional.",
-        },
-        { role: "user", content: question },
-      ],
+    // IMPORTANTE: usamos attachments por mensaje para enlazar el Vector Store
+    const resp = await client.responses.create({
+      // Modelos de Responses que soportan file_search: prueba primero gpt-4.1-mini
+      model: "gpt-4.1-mini",
+      instructions:
+        "Eres LEO, asistente de PLUSEVO. Responde SOLO con información encontrada en los documentos del Vector Store. " +
+        "Si la respuesta no está en esos documentos, di: 'No tengo ese dato en los documentos de PLUSEVO'.",
       tools: [{ type: "file_search" }],
-      tool_resources: {
-        file_search: {
-          vector_store_ids: [VSTORE],
-        },
-      },
+      input: [
+        {
+          role: "user",
+          // El contenido va como input_text:
+          content: [
+            { type: "input_text", text: question }
+          ],
+          // Aquí “pegamos” el Vector Store al mensaje
+          attachments: [
+            { vector_store_id: VSTORE }
+          ]
+        }
+      ]
     });
 
-    const answer = chat.choices?.[0]?.message?.content || "";
-    return res.status(200).json({ answer: (answer || "").trim() });
+    const answer =
+      (typeof resp.output_text === "string" && resp.output_text.trim()) ||
+      (Array.isArray(resp.output)
+        ? resp.output.map(p => (p?.content || []).map(c => c?.text?.value || "").join("\n")).join("\n").trim()
+        : "");
+
+    return res.status(200).json({ answer });
   } catch (err) {
     return res.status(500).json({
       error: "Error interno en /api/leo-chat",
