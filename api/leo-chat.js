@@ -1,4 +1,4 @@
-// api/leo-chat.js — OpenAI mínimo (sin vector)
+// api/leo-chat.js — Versión final con Vector Store (SIN temperature)
 export const config = { runtime: "nodejs" };
 
 const CORS = {
@@ -15,7 +15,10 @@ export default async function handler(req, res) {
     if (req.method === "GET") return res.status(200).json({ ok: true, hint: "Usa POST con { question }" });
     if (req.method !== "POST") return res.status(405).json({ error: "Método no permitido" });
 
-    if (!process.env.OPENAI_API_KEY) return res.status(500).json({ error: "Falta OPENAI_API_KEY" });
+    const API_KEY = process.env.OPENAI_API_KEY;
+    const VSTORE = process.env.OPENAI_VECTOR_STORE_ID; // vs_68c873b973e08191be0e69d0410a5eb8
+    if (!API_KEY) return res.status(500).json({ error: "Falta OPENAI_API_KEY" });
+    if (!VSTORE) return res.status(500).json({ error: "Falta OPENAI_VECTOR_STORE_ID" });
 
     let body = {};
     try { body = typeof req.body === "object" ? req.body : JSON.parse(req.body || "{}"); } catch {}
@@ -23,13 +26,16 @@ export default async function handler(req, res) {
     if (!question) return res.status(400).json({ error: "Envía { question: string }" });
 
     const { default: OpenAI } = await import("openai");
-    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const client = new OpenAI({ apiKey: API_KEY });
 
     const r = await client.responses.create({
-      model: "gpt-5.1-mini",
-      temperature: 0.2,
-      instructions: "Responde breve y claro.",
-      input: question
+      model: "gpt-5.1",
+      instructions:
+        "Eres LEO, asistente de PLUSEVO. Responde SOLO con información encontrada en los documentos del Vector Store. " +
+        "Si la respuesta no está en esos documentos, di: 'No tengo ese dato en los documentos de PLUSEVO'.",
+      input: question,
+      tools: [{ type: "file_search" }],
+      tool_config: { file_search: { vector_store_ids: [VSTORE], max_num_results: 8 } }
     });
 
     const answer =
@@ -40,6 +46,10 @@ export default async function handler(req, res) {
 
     return res.status(200).json({ answer });
   } catch (err) {
-    return res.status(500).json({ error: "OpenAI fallo", message: String(err?.message || err) });
+    return res.status(500).json({
+      error: "Error interno en /api/leo-chat",
+      message: String(err?.message || err),
+      stack: err?.stack || null,
+    });
   }
 }
